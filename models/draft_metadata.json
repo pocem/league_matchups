@@ -1,0 +1,31 @@
+{
+  "matches": 99091,
+  "test_from": "2026-10-12 04:06:55.734000+00:00",
+  "test_log_loss": {
+    "always blue rate": 0.6921087503433228,
+    "champion strength only": 0.6892818212509155,
+    "draft net": 0.6893025636672974
+  },
+  "valid_log_loss": {
+    "always blue rate": 0.6921209096908569,
+    "champion strength only": 0.6867906451225281,
+    "draft net": 0.6874943971633911
+  },
+  "best_config": {
+    "model": {
+      "kind": "net",
+      "n_champ": 174,
+      "dim": 16,
+      "hidden": [
+        256,
+        128,
+        64
+      ],
+      "dropout": 0.5
+    },
+    "lr": 0.0003,
+    "weight_decay": 0.1,
+    "batch_size": 512
+  },
+  "best_epoch": 57
+}

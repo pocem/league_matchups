@@ -113,3 +113,40 @@ time folds: train Jul-Dec 2024 → validate Jan-Jun 2025, and train Jul 2024-Jun
 Jul-Dec 2025. The neural net averages 2 seeds per fold. The searches are stored in
 `data/pro/tune_*.sqlite`, so rerunning a search continues it. The winners are written to
 `models/tuned_*.json`. `compare --defaults` ignores them.
+
+## Solo queue draft model (Stage 1)
+
+```bash
+python -m crawler export --patch-prefix 16.   # data/matches.parquet from the crawl
+python -m draft train                         # grid search, models/draft_net.pt + draft_metadata.json
+python -m draft score                         # data/pro/draft_scores.parquet, one draft logit per pro game
+python -m pro compare                         # uses the draft score when present (--no-draft to leave it out)
+```
+
+The model predicts P(blue wins) from the 10 champions alone. It uses the same antisymmetric form
+as the pro net: champion embeddings by role, plus own × opponent lane products. Pro drafts are
+scored without the solo queue blue-side bias.
+
+First run (99k matches, almost all on patches 16.19-16.20, test = newest 10%): log loss 0.6893,
+vs 0.6921 for always predicting the blue rate. No network beat a plain per-champion-per-role
+strength baseline (also 0.6893), so 100k games aren't enough to learn synergies or counters.
+On pro games the score is weak but real (AUC 0.513 overall, 0.533 on patches 16.15+). It
+improves 2026 log loss by 0.0005 for LR, and by 0.001-0.0017 on patches 16.15+. Pro play runs a
+few patches behind solo queue, so draft data from the same patch as the pro game is the
+biggest lever.
+
+### Same-patch draft test
+
+Pro play runs a few patches behind solo queue. `python -m draft patch-eval` trains a draft model
+on each patch's solo queue games alone. It then checks whether that score helps the pro models
+more than the all-patch score, on the pro games played on that same patch:
+
+```bash
+python -m crawler export --patch-prefix 16.   # refresh solo games
+python -m pro compare --no-draft             # baseline predictions in data/pro/test_predictions.csv
+python -m draft patch-eval                   # patches with >= 20k solo games (--min-games)
+```
+
+The crawl downloads newest matches first, and its queue holds patches 16.16-16.19, which pro play
+was on in Aug-Oct 2026 (about 2,000 pro games). Each of those patches becomes testable as it
+fills up.

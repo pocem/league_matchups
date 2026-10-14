@@ -34,6 +34,8 @@ def side_features(g: pd.DataFrame, sd: str) -> pd.DataFrame:
     """One side's numeric features, named without the side prefix."""
     f = {"team_elo": g[f"{sd}_team_elo"], "roster_elo": g[f"{sd}_roster_elo"],
          "league_offset": g[f"{sd}_league_offset"], "log_team_games": np.log1p(g[f"{sd}_team_games"])}
+    if "draft_logit" in g:  # solo queue draft model (python -m draft score), from this side's view
+        f["draft_score"] = g.draft_logit * (1 if sd == "blue" else -1)
     for r in ROLES:
         p = f"{sd}_{r}_"
         f[f"{r}_player_elo"] = g[p + "player_elo"]

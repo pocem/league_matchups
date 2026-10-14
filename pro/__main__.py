@@ -23,6 +23,7 @@ def main():
     c.add_argument("--data", default="data/pro")
     c.add_argument("--save", default="models", help="directory for the fitted models")
     c.add_argument("--defaults", action="store_true", help="ignore tuned hyperparameters in --save")
+    c.add_argument("--no-draft", action="store_true", help="leave out the solo queue draft score")
     t = sub.add_parser("tune", help="hyperparameter search on 2024-2025 (never touches 2026)")
     t.add_argument("model", choices=["logistic_regression", "lightgbm", "neural_net"])
     t.add_argument("--minutes", type=float, default=15)
@@ -30,7 +31,7 @@ def main():
     t.add_argument("--save", default="models", help="writes tuned_<model>.json here")
     args = ap.parse_args()
     if args.cmd == "compare":
-        return compare(Path(args.data), Path(args.save), args.defaults)
+        return compare(Path(args.data), Path(args.save), args.defaults, not args.no_draft)
     if args.cmd == "tune":
         from . import tune
         return tune.tune(args.model, args.minutes, Path(args.data), Path(args.save))
@@ -50,10 +51,13 @@ def main():
         print(dataset.elo_report(games).to_string(index=False))
 
 
-def compare(data: Path, save_dir: Path, defaults=False):
+def compare(data: Path, save_dir: Path, defaults=False, draft=True):
     from . import models, tune  # heavy imports (torch, lightgbm) only when needed
 
     games = pd.read_parquet(data / "games.parquet")
+    if draft and (data / "draft_scores.parquet").exists():
+        games = games.merge(pd.read_parquet(data / "draft_scores.parquet"), on="gameid", how="left")
+        print("using the solo queue draft score")
     sizes = {k: len(pd.read_csv(data / f"vocab_{k}.csv")) for k in ("champion", "player")}
     params = {} if defaults else tune.load_tuned(save_dir)
     if params:
