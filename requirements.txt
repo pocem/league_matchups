@@ -1,3 +1,7 @@
 aiohttp>=3.9
 pandas>=2.0
 pyarrow>=14
+scikit-learn>=1.4
+lightgbm>=4.0
+torch>=2.0
+joblib

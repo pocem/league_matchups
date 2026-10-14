@@ -75,3 +75,26 @@ Elo only 0.6153 -> 0.6074 with the player and champion features. Nearly all of t
 `pc_games` (comfort on the champion) and `meta_wr`. The player's win rate overall and on the
 champion (raw, or adjusted for opponents via Elo) added nothing on top of Elo, so they were
 dropped. Time-decaying `pc_games` (45-365 day half-life) made it worse, so it is an all-time count.
+
+## Pro play models
+
+`python -m pro compare` fits logistic regression, LightGBM and a neural net, then tests them on
+all 2026 games. The number of trees or epochs is chosen on Jul-Dec 2025. Each model is then
+refit on Jul 2024 - Dec 2025 (the first half of 2024 is Elo burn-in). The fitted models go to
+`models/`, with `metadata.json` holding the training window and test scores. Each model's 2026
+predictions go to `data/pro/test_predictions.csv`.
+
+The neural net scores the game from each side's point of view:
+logit = s(blue, red) - s(red, blue) + blue bias. Swapping the sides flips the prediction exactly.
+
+| 2026 test | log loss | accuracy | log loss, major leagues |
+|---|---|---|---|
+| always blue rate | 0.691 | 53.5% | 0.688 |
+| raw roster Elo | 0.617 | 65.2% | 0.645 |
+| logistic regression | 0.600 | 67.1% | 0.637 |
+| LightGBM | 0.601 | 66.9% | 0.635 |
+| neural net | 0.600 | 67.1% | 0.635 |
+
+The three models are statistically tied (bootstrap). Random forest and LightGBM with champion
+ids were significantly worse and were dropped. Champion and player embeddings learned on pro data
+alone didn't help. They are still available in `fit_nn` for the solo queue pretraining later.

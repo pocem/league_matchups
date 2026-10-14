@@ -1,4 +1,5 @@
-"""python -m pro build   -> data/pro/games.parquet (+ games.csv to read) + vocab CSVs"""
+"""python -m pro build     -> data/pro/games.parquet (+ games.csv to read) + vocab CSVs
+python -m pro compare   -> model comparison on 2026 (data/pro/model_comparison.csv), fitted models in models/"""
 from __future__ import annotations
 
 import argparse
@@ -16,7 +17,12 @@ def main():
     p.add_argument("--src", default="pro_play_data")
     p.add_argument("--out", default="data/pro")
     p.add_argument("--min-player-games", type=int, default=10)
+    c = sub.add_parser("compare", help="fit and compare models, test on 2026")
+    c.add_argument("--data", default="data/pro")
+    c.add_argument("--save", default="models", help="directory for the fitted models")
     args = ap.parse_args()
+    if args.cmd == "compare":
+        return compare(Path(args.data), Path(args.save))
 
     df = load.load(args.src)
     games = dataset.build(df)
@@ -31,6 +37,20 @@ def main():
     print(f"wrote {len(games):,} games x {games.shape[1]} columns to {out / 'games.parquet'} and games.csv")
     with pd.option_context("display.float_format", "{:.4f}".format):
         print(dataset.elo_report(games).to_string(index=False))
+
+
+def compare(data: Path, save_dir: Path):
+    from . import models  # heavy imports (torch, lightgbm) only when needed
+
+    games = pd.read_parquet(data / "games.parquet")
+    sizes = {k: len(pd.read_csv(data / f"vocab_{k}.csv")) for k in ("champion", "player")}
+    table, preds, fitted = models.compare(games, sizes)
+    models.save(fitted, table, save_dir)
+    table.to_csv(data / "model_comparison.csv", float_format="%.4f")
+    preds.to_csv(data / "test_predictions.csv", index=False, float_format="%.4f")
+    with pd.option_context("display.float_format", "{:.4f}".format, "display.width", 200):
+        print(table.to_string())
+    print(f"saved models to {save_dir}/")
 
 
 if __name__ == "__main__":
