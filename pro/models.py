@@ -69,26 +69,43 @@ def split(g: pd.DataFrame):
 
 # ---------------------------------------------------------------- classic models
 
-# Each fit_* returns (test predictions, fitted model), fitted on train + valid.
+# Each fit_* returns (test predictions, fitted model), fitted on train + valid. Hyperparameters
+# default to the hand-picked values below; `python -m pro tune` searches for better ones.
 
-def fit_logreg(tr, va, te):
+LOGREG_DEFAULTS = {"C": 0.1}
+LGBM_DEFAULTS = dict(learning_rate=0.02, num_leaves=15, min_child_samples=60, feature_fraction=0.6,
+                     bagging_fraction=0.8, bagging_freq=1, lambda_l2=5.0)
+LGBM_FIXED = dict(objective="binary", cat_smooth=50, min_data_per_group=100, verbose=-1, seed=0)
+NN_DEFAULTS = dict(hidden=64, n_layers=2, dropout=0.3, weight_decay=1e-3, lr=1e-3, batch_size=256)
+NN_ARCH = ("hidden", "n_layers", "dropout")  # the rest of NN_DEFAULTS are training settings
+
+
+def logreg_cols(g):
+    return [c for c in tabular(g.head()).columns if c.startswith("diff_")]
+
+
+def fit_logreg(tr, va, te, params=None):
+    p = {**LOGREG_DEFAULTS, **(params or {})}
     full = pd.concat([tr, va])
-    cols = [c for c in tabular(tr.head()).columns if c.startswith("diff_")]
-    m = make_pipeline(StandardScaler(), LogisticRegression(C=0.1, max_iter=5000))
+    cols = logreg_cols(tr)
+    m = make_pipeline(StandardScaler(), LogisticRegression(C=p["C"], max_iter=5000))
     m.fit(tabular(full)[cols], full.blue_win)
     return m.predict_proba(tabular(te)[cols])[:, 1], m
 
 
-def fit_lgbm(tr, va, te, champions=False):
-    params = dict(objective="binary", learning_rate=0.02, num_leaves=15, min_child_samples=60,
-                  feature_fraction=0.6, bagging_fraction=0.8, bagging_freq=1, lambda_l2=5.0,
-                  cat_smooth=50, min_data_per_group=100, verbose=-1, seed=0)
-    dtr = lgb.Dataset(tabular(tr, champions), tr.blue_win)
-    dva = lgb.Dataset(tabular(va, champions), va.blue_win, reference=dtr)
-    m = lgb.train(params, dtr, 3000, valid_sets=[dva],
-                  callbacks=[lgb.early_stopping(200, verbose=False)])
+def lgbm_early_stop(params, x_tr, y_tr, x_va, y_va):
+    """Train with early stopping on the validation set; returns the booster (best_iteration set)."""
+    dtr = lgb.Dataset(x_tr, y_tr)
+    dva = lgb.Dataset(x_va, y_va, reference=dtr)
+    return lgb.train({**LGBM_FIXED, **params}, dtr, 10000, valid_sets=[dva],
+                     callbacks=[lgb.early_stopping(200, verbose=False)])
+
+
+def fit_lgbm(tr, va, te, champions=False, params=None):
+    p = {**LGBM_DEFAULTS, **(params or {})}
+    m = lgbm_early_stop(p, tabular(tr, champions), tr.blue_win, tabular(va, champions), va.blue_win)
     full = pd.concat([tr, va])
-    m = lgb.train(params, lgb.Dataset(tabular(full, champions), full.blue_win), m.best_iteration)
+    m = lgb.train({**LGBM_FIXED, **p}, lgb.Dataset(tabular(full, champions), full.blue_win), m.best_iteration)
     return m.predict(tabular(te, champions)), m
 
 
@@ -97,15 +114,17 @@ def fit_lgbm(tr, va, te, champions=False):
 class SideScorer(nn.Module):
     """Scores one side against the other: own and opponent stats, champions and players."""
 
-    def __init__(self, n_num, n_champ, n_player, d_champ, d_player, hidden, dropout):
+    def __init__(self, n_num, n_champ, n_player, d_champ, d_player, hidden, n_layers, dropout):
         super().__init__()
         self.champ = nn.Embedding(n_champ, d_champ) if d_champ else None
         self.player = nn.Embedding(n_player, d_player) if d_player else None
         self.emb_drop = nn.Dropout(dropout / 2)
-        in_dim = 2 * n_num + 15 * d_champ + 10 * d_player  # champs: own, opp, lane products
-        self.mlp = nn.Sequential(nn.Linear(in_dim, hidden), nn.ReLU(), nn.Dropout(dropout),
-                                 nn.Linear(hidden, hidden), nn.ReLU(), nn.Dropout(dropout),
-                                 nn.Linear(hidden, 1))
+        width = 2 * n_num + 15 * d_champ + 10 * d_player  # champs: own, opp, lane products
+        layers = []
+        for _ in range(n_layers):
+            layers += [nn.Linear(width, hidden), nn.ReLU(), nn.Dropout(dropout)]
+            width = hidden
+        self.mlp = nn.Sequential(*layers, nn.Linear(width, 1))
 
     def forward(self, num_own, num_opp, ch_own, ch_opp, pl_own, pl_opp):
         parts = [num_own, num_opp]
@@ -144,50 +163,53 @@ def nn_arrays(g, mean=None, std=None):
     return tensors, mean, std
 
 
-def fit_nn(tr, va, te, n_champ, n_player, d_champ=0, d_player=0, seeds=(0, 1, 2),
-           hidden=64, dropout=0.3, weight_decay=1e-3, lr=1e-3, epochs=80, patience=10):
+def train_nn(X, arch: dict, p: dict, seed: int, n_epochs: int, val=None, patience=10):
+    """Train one DraftNet. With val, stops early and returns (model, best epoch, best val loss)."""
+    loss_fn = nn.BCEWithLogitsLoss()
+    torch.manual_seed(seed)
+    model = DraftNet(n_num=X[0].shape[2], **arch)
+    opt = torch.optim.AdamW(model.parameters(), lr=p["lr"], weight_decay=p["weight_decay"])
+    best, best_epoch = np.inf, 0
+    for epoch in range(1, n_epochs + 1):
+        model.train()
+        for b in torch.randperm(len(X[3])).split(p["batch_size"]):
+            opt.zero_grad()
+            loss_fn(model(X[0][b], X[1][b], X[2][b]), X[3][b]).backward()
+            opt.step()
+        if val is not None:
+            model.eval()
+            with torch.no_grad():
+                v = loss_fn(model(*val[:3]), val[3]).item()
+            if v < best - 1e-5:
+                best, best_epoch = v, epoch
+            elif epoch - best_epoch >= patience:
+                break
+    return model, best_epoch, best
+
+
+def fit_nn(tr, va, te, n_champ, n_player, d_champ=0, d_player=0, seeds=(0, 1, 2), params=None,
+           epochs=150):
     """Per seed: find the best epoch count on validation, refit on train + valid for that many
     epochs. Predicts the mean over seeds; the model is the seeds' weights + input scaling."""
-    kw = dict(n_champ=n_champ, n_player=n_player, d_champ=d_champ, d_player=d_player,
-              hidden=hidden, dropout=dropout)
+    p = {**NN_DEFAULTS, **(params or {})}
+    arch = dict(n_champ=n_champ, n_player=n_player, d_champ=d_champ, d_player=d_player,
+                **{k: p[k] for k in NN_ARCH})
     trX, mean, std = nn_arrays(tr)
     vaX, _, _ = nn_arrays(va, mean, std)
     full = pd.concat([tr, va])
     fullX, mean, std = nn_arrays(full)
     teX, _, _ = nn_arrays(te, mean, std)
-    loss_fn = nn.BCEWithLogitsLoss()
-
-    def train(X, seed, n_epochs, val=None):
-        torch.manual_seed(seed)
-        model = DraftNet(n_num=X[0].shape[2], **kw)
-        opt = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=weight_decay)
-        best, best_epoch = np.inf, 0
-        for epoch in range(1, n_epochs + 1):
-            model.train()
-            for b in torch.randperm(len(X[3])).split(256):
-                opt.zero_grad()
-                loss_fn(model(X[0][b], X[1][b], X[2][b]), X[3][b]).backward()
-                opt.step()
-            if val is not None:
-                model.eval()
-                with torch.no_grad():
-                    v = loss_fn(model(*val[:3]), val[3]).item()
-                if v < best - 1e-5:
-                    best, best_epoch = v, epoch
-                elif epoch - best_epoch >= patience:
-                    break
-        return model, best_epoch
 
     preds, states, n_epochs = [], [], []
     for seed in seeds:
-        _, n_best = train(trX, seed, epochs, val=vaX)
-        model, _ = train(fullX, seed, max(n_best, 1))
+        _, n_best, _ = train_nn(trX, arch, p, seed, epochs, val=vaX)
+        model, _, _ = train_nn(fullX, arch, p, seed, max(n_best, 1))
         model.eval()
         with torch.no_grad():
             preds.append(torch.sigmoid(model(*teX[:3])).numpy())
         states.append(model.state_dict())
         n_epochs.append(n_best)
-    bundle = {"config": {"n_num": fullX[0].shape[2], **kw}, "state_dicts": states, "epochs": n_epochs,
+    bundle = {"config": {"n_num": fullX[0].shape[2], **arch}, "params": p, "state_dicts": states, "epochs": n_epochs,
               "mean": mean, "std": std, "features": list(side_features(tr.head(), "blue").columns)}
     return np.mean(preds, 0), bundle
 
@@ -199,7 +221,9 @@ def scores(y, p, major) -> dict:
             "auc": roc_auc_score(y, p), "log_loss_major": log_loss(y[major], p[major])}
 
 
-def compare(games: pd.DataFrame, vocab_sizes: dict) -> tuple[pd.DataFrame, pd.DataFrame]:
+def compare(games: pd.DataFrame, vocab_sizes: dict, params: dict | None = None):
+    """params: {model name: hyperparameters}, e.g. from tuning; missing models use defaults."""
+    params = params or {}
     tr, va, te = split(games)
     n_champ, n_player = vocab_sizes["champion"] + 1, vocab_sizes["player"] + 1
     blue_rate = pd.concat([tr, va]).blue_win.mean()
@@ -208,9 +232,9 @@ def compare(games: pd.DataFrame, vocab_sizes: dict) -> tuple[pd.DataFrame, pd.Da
     models = {
         "always blue rate": lambda: (np.full(len(te), blue_rate), None),
         "raw roster Elo": lambda: (te.p_blue_roster_elo.to_numpy(), None),
-        "logistic_regression": lambda: fit_logreg(tr, va, te),
-        "lightgbm": lambda: fit_lgbm(tr, va, te),
-        "neural_net": lambda: fit_nn(tr, va, te, n_champ, n_player),
+        "logistic_regression": lambda: fit_logreg(tr, va, te, params=params.get("logistic_regression")),
+        "lightgbm": lambda: fit_lgbm(tr, va, te, params=params.get("lightgbm")),
+        "neural_net": lambda: fit_nn(tr, va, te, n_champ, n_player, params=params.get("neural_net")),
     }
     y = te.blue_win.to_numpy()
     major = te.league.isin(MAJOR).to_numpy()
@@ -230,7 +254,7 @@ def compare(games: pd.DataFrame, vocab_sizes: dict) -> tuple[pd.DataFrame, pd.Da
     return table, pred_df, fitted
 
 
-def save(fitted: dict, table: pd.DataFrame, out_dir: Path):
+def save(fitted: dict, table: pd.DataFrame, out_dir: Path, params: dict | None = None):
     """Write the fitted models plus a metadata.json saying how they were trained and scored."""
     out_dir.mkdir(parents=True, exist_ok=True)
     joblib.dump(fitted["logistic_regression"], out_dir / "logistic_regression.joblib")
@@ -241,6 +265,12 @@ def save(fitted: dict, table: pd.DataFrame, out_dir: Path):
         "stopping_point_chosen_on": f"train {TRAIN_START} - {VALID_START} vs valid {VALID_START} - {TEST_START}",
         "tested_on": f"from {TEST_START}",
         "input": "rows of data/pro/games.parquet, features via pro.models.tabular and nn_arrays",
+        "hyperparameters": {
+            "logistic_regression": {**LOGREG_DEFAULTS, **(params or {}).get("logistic_regression", {})},
+            "lightgbm": {**LGBM_DEFAULTS, **(params or {}).get("lightgbm", {}),
+                         "n_trees": fitted["lightgbm"].num_trees()},
+            "neural_net": {**fitted["neural_net"]["params"], "epochs": fitted["neural_net"]["epochs"]},
+        },
         "test_scores": table.loc[list(fitted)].round(4).to_dict("index"),
         "versions": {"sklearn": sklearn.__version__, "lightgbm": lgb.__version__, "torch": torch.__version__},
     }

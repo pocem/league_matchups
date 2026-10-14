@@ -3,27 +3,58 @@
   "stopping_point_chosen_on": "train 2024-07-01 - 2025-07-01 vs valid 2025-07-01 - 2026-01-01",
   "tested_on": "from 2026-01-01",
   "input": "rows of data/pro/games.parquet, features via pro.models.tabular and nn_arrays",
-  "test_scores": {
+  "hyperparameters": {
     "logistic_regression": {
-      "log_loss": 0.5996,
-      "brier": 0.2068,
-      "accuracy": 0.671,
-      "auc": 0.7372,
-      "log_loss_major": 0.6372
+      "C": 0.0031622776601683794
     },
     "lightgbm": {
-      "log_loss": 0.6011,
-      "brier": 0.2073,
-      "accuracy": 0.669,
-      "auc": 0.7364,
-      "log_loss_major": 0.6351
+      "learning_rate": 0.004946460308517961,
+      "num_leaves": 2,
+      "min_child_samples": 11,
+      "feature_fraction": 0.14015927121987945,
+      "bagging_fraction": 0.43113358946793484,
+      "bagging_freq": 1,
+      "lambda_l2": 0.009684681080595467,
+      "max_depth": 6,
+      "lambda_l1": 0.0032644286844640564,
+      "min_gain_to_split": 0.48644852317046344,
+      "n_trees": 4468
     },
     "neural_net": {
-      "log_loss": 0.5996,
-      "brier": 0.2068,
-      "accuracy": 0.6708,
-      "auc": 0.7366,
-      "log_loss_major": 0.6353
+      "hidden": 16,
+      "n_layers": 1,
+      "dropout": 0.48529371386502584,
+      "weight_decay": 0.0029291576579577898,
+      "lr": 0.0013262367556901293,
+      "batch_size": 64,
+      "epochs": [
+        3,
+        6,
+        3
+      ]
+    }
+  },
+  "test_scores": {
+    "logistic_regression": {
+      "log_loss": 0.5994,
+      "brier": 0.2067,
+      "accuracy": 0.6718,
+      "auc": 0.7377,
+      "log_loss_major": 0.6364
+    },
+    "lightgbm": {
+      "log_loss": 0.6014,
+      "brier": 0.2075,
+      "accuracy": 0.6659,
+      "auc": 0.7354,
+      "log_loss_major": 0.6371
+    },
+    "neural_net": {
+      "log_loss": 0.5997,
+      "brier": 0.2069,
+      "accuracy": 0.6685,
+      "auc": 0.7373,
+      "log_loss_major": 0.6348
     }
   },
   "versions": {

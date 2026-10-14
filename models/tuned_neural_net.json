@@ -1,0 +1,22 @@
+{
+  "params": {
+    "hidden": 16,
+    "n_layers": 1,
+    "dropout": 0.48529371386502584,
+    "weight_decay": 0.0029291576579577898,
+    "lr": 0.0013262367556901293,
+    "batch_size": 64
+  },
+  "cv_log_loss": 0.6178853511810303,
+  "cv_log_loss_defaults": 0.6189967393875122,
+  "trials": 88,
+  "completed": 52,
+  "best_trial_attrs": {
+    "best_epochs": [
+      11,
+      7,
+      3,
+      6
+    ]
+  }
+}

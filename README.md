@@ -98,3 +98,18 @@ logit = s(blue, red) - s(red, blue) + blue bias. Swapping the sides flips the pr
 The three models are statistically tied (bootstrap). Random forest and LightGBM with champion
 ids were significantly worse and were dropped. Champion and player embeddings learned on pro data
 alone didn't help. They are still available in `fit_nn` for the solo queue pretraining later.
+
+### Hyperparameter tuning
+
+```bash
+python -m pro tune logistic_regression          # grid over C
+python -m pro tune lightgbm --minutes 25        # Optuna TPE search
+python -m pro tune neural_net --minutes 25
+python -m pro compare                           # refit with models/tuned_*.json, test on 2026
+```
+
+Tuning never sees 2026. Each candidate is scored by its average validation log loss over two
+time folds: train Jul-Dec 2024 → validate Jan-Jun 2025, and train Jul 2024-Jun 2025 → validate
+Jul-Dec 2025. The neural net averages 2 seeds per fold. The searches are stored in
+`data/pro/tune_*.sqlite`, so rerunning a search continues it. The winners are written to
+`models/tuned_*.json`. `compare --defaults` ignores them.

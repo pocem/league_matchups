@@ -1,5 +1,7 @@
 """python -m pro build     -> data/pro/games.parquet (+ games.csv to read) + vocab CSVs
-python -m pro compare   -> model comparison on 2026 (data/pro/model_comparison.csv), fitted models in models/"""
+python -m pro tune M    -> hyperparameter search for model M, writes models/tuned_M.json
+python -m pro compare   -> model comparison on 2026 (data/pro/model_comparison.csv), fitted models in models/
+                           (uses models/tuned_*.json when present)"""
 from __future__ import annotations
 
 import argparse
@@ -20,9 +22,18 @@ def main():
     c = sub.add_parser("compare", help="fit and compare models, test on 2026")
     c.add_argument("--data", default="data/pro")
     c.add_argument("--save", default="models", help="directory for the fitted models")
+    c.add_argument("--defaults", action="store_true", help="ignore tuned hyperparameters in --save")
+    t = sub.add_parser("tune", help="hyperparameter search on 2024-2025 (never touches 2026)")
+    t.add_argument("model", choices=["logistic_regression", "lightgbm", "neural_net"])
+    t.add_argument("--minutes", type=float, default=15)
+    t.add_argument("--data", default="data/pro")
+    t.add_argument("--save", default="models", help="writes tuned_<model>.json here")
     args = ap.parse_args()
     if args.cmd == "compare":
-        return compare(Path(args.data), Path(args.save))
+        return compare(Path(args.data), Path(args.save), args.defaults)
+    if args.cmd == "tune":
+        from . import tune
+        return tune.tune(args.model, args.minutes, Path(args.data), Path(args.save))
 
     df = load.load(args.src)
     games = dataset.build(df)
@@ -39,13 +50,16 @@ def main():
         print(dataset.elo_report(games).to_string(index=False))
 
 
-def compare(data: Path, save_dir: Path):
-    from . import models  # heavy imports (torch, lightgbm) only when needed
+def compare(data: Path, save_dir: Path, defaults=False):
+    from . import models, tune  # heavy imports (torch, lightgbm) only when needed
 
     games = pd.read_parquet(data / "games.parquet")
     sizes = {k: len(pd.read_csv(data / f"vocab_{k}.csv")) for k in ("champion", "player")}
-    table, preds, fitted = models.compare(games, sizes)
-    models.save(fitted, table, save_dir)
+    params = {} if defaults else tune.load_tuned(save_dir)
+    if params:
+        print(f"using tuned hyperparameters for: {', '.join(params)}")
+    table, preds, fitted = models.compare(games, sizes, params)
+    models.save(fitted, table, save_dir, params)
     table.to_csv(data / "model_comparison.csv", float_format="%.4f")
     preds.to_csv(data / "test_predictions.csv", index=False, float_format="%.4f")
     with pd.option_context("display.float_format", "{:.4f}".format, "display.width", 200):
