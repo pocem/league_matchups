@@ -43,3 +43,35 @@ duplicate roles are dropped.
 `n_apex` uses the ladder at crawl time. Riot doesn't expose a player's rank at the time
 of a game, and early-season games happen right after the rank reset, so filter on
 `n_apex` and `patch` to keep lobbies that really are high elo.
+
+## Pro play dataset
+
+`python -m pro build` turns the Oracle's Elixir CSVs in `pro_play_data/` into
+`data/pro/games.parquet`: one row per game (about 30k, 2024-2026), with features for both
+sides. Every feature uses only games played earlier, so any time-based split is leak-free.
+The `vocab_*.csv` files map player, team, champion and league ids to the `*_idx` columns
+used by embedding layers. Index 0 means unknown or rare (fewer than 10 games).
+
+| columns | meaning |
+|---|---|
+| `{side}_{role}_player`, `_champion` (+ `_idx`) | who played what. Roles: top jng mid bot sup |
+| `{side}_{role}_player_elo`, `_player_games` | player rating and experience |
+| `{side}_{role}_pc_games`, `_pc_days_since` | how often and how recently the player has played this champion |
+| `{side}_{role}_meta_games`, `_meta_wr`, `_patch_games` | champion+role pro meta: 45-day decayed and on this patch |
+| `{side}_team_elo`, `_team_games`, `_roster_elo` | team-id rating and the mean of the 5 players' ratings |
+| `{side}_home_league`, `_league_offset`, `cross_league` | league strength, only non-zero across leagues |
+| `p_blue_team_elo`, `p_blue_roster_elo` | raw Elo win probabilities (baselines) |
+| `blue_win` | label |
+
+Ratings (`pro/ratings.py`): Elo starts at 1500 with a K that decays from 120 to 28 over the
+first games. Each new calendar year keeps 80% of a rating's distance from 1500. Effective
+strength = rating + home league offset. League offsets learn only from cross-league games
+(MSI, Worlds, EWC, EM, KeSPA Cup...). Player Elo updates from the roster-mean expectation,
+so it tracks rosters through subs and transfers. Raw Elo log loss in 2026: 0.616 for roster
+Elo, 0.632 for team Elo, 0.691 for the base rate.
+
+What the extra features add, measured with a logistic regression (train Jul 2024-2025, test 2026):
+Elo only 0.6153 -> 0.6074 with the player and champion features. Nearly all of that comes from
+`pc_games` (comfort on the champion) and `meta_wr`. The player's win rate overall and on the
+champion (raw, or adjusted for opponents via Elo) added nothing on top of Elo, so they were
+dropped. Time-decaying `pc_games` (45-365 day half-life) made it worse, so it is an all-time count.
