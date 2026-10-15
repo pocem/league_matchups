@@ -5,3 +5,7 @@ scikit-learn>=1.4
 lightgbm>=4.0
 torch>=2.0
 joblib
+optuna>=4.0
+# tests
+pytest
+mini-racer

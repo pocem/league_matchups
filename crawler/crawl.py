@@ -137,11 +137,11 @@ async def crawl_routing(client, con, routing, platforms, args, progress: Progres
 
     matches = asyncio.Queue(maxsize=args.match_workers * 4)
     inflight = set()
-
     async def feeder():
+        where, params = await id_filter(client, con, routing, platforms, args)
         while True:
-            rows = con.execute("""SELECT match_id FROM match_queue WHERE routing = ? AND status = 0
-                                  ORDER BY match_id DESC LIMIT 1000""", (routing,)).fetchall()
+            rows = con.execute(f"""SELECT match_id FROM match_queue WHERE routing = ? AND status = 0 {where}
+                                   ORDER BY match_id DESC LIMIT 1000""", (routing, *params)).fetchall()
             batch = [m for (m,) in rows if m not in inflight]
             if not batch:
                 if ids_done.is_set():
@@ -173,6 +173,48 @@ async def crawl_routing(client, con, routing, platforms, args, progress: Progres
             for _ in range(args.match_workers):
                 tg.create_task(match_worker())
     log.info("%s: done", routing)
+
+
+async def find_boundary(client, con, routing, platform, until, keep_raw) -> str | None:
+    """Highest queued match id of a game played before `until` (unix seconds).
+
+    Match ids grow with time per platform, so a binary search over the queued ids finds it in
+    ~log2(queue) downloads. Those matches are stored as usual, so the probes aren't wasted."""
+    ids = [m for (m,) in con.execute("""SELECT match_id FROM match_queue WHERE status = 0 AND match_id LIKE ?
+                                        ORDER BY match_id""", (platform.upper() + "_%",))]
+    lo, hi, best = 0, len(ids) - 1, None
+    while lo <= hi:
+        mid = (lo + hi) // 2
+        try:
+            data = await client.get(routing, f"/lol/match/v5/matches/{ids[mid]}", method="match")
+        except RiotError as e:
+            log.warning("%s: %s", ids[mid], e)
+            store.set_status(con, ids[mid], store.FAILED)
+            ids.pop(mid)
+            hi -= 1
+            continue
+        store.store_match(con, ids[mid], data, keep_raw)
+        if data["info"]["gameCreation"] < until * 1000:
+            best, lo = ids[mid], mid + 1
+        else:
+            hi = mid - 1
+    return best
+
+
+async def id_filter(client, con, routing, platforms, args) -> tuple[str, list]:
+    """SQL condition limiting downloads to matches played before --until. Skipped ids stay queued."""
+    if args.until is None:
+        return "", []
+    conds, params = [], []
+    for platform in platforms:
+        boundary = await find_boundary(client, con, routing, platform, args.until, args.keep_raw)
+        if boundary is None:
+            log.info("%s: no queued %s match before --until", routing, platform)
+            continue
+        log.info("%s: downloading %s matches up to %s", routing, platform, boundary)
+        conds.append("(match_id LIKE ? AND match_id <= ?)")
+        params += [platform.upper() + "_%", boundary]
+    return f"AND ({' OR '.join(conds) or '0'})", params
 
 
 async def run(client: RiotClient, con, args):

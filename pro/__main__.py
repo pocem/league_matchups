@@ -1,7 +1,8 @@
 """python -m pro build     -> data/pro/games.parquet (+ games.csv to read) + vocab CSVs
 python -m pro tune M    -> hyperparameter search for model M, writes models/tuned_M.json
 python -m pro compare   -> model comparison on 2026 (data/pro/model_comparison.csv), fitted models in models/
-                           (uses models/tuned_*.json when present)"""
+                           (uses models/tuned_*.json when present)
+python -m pro deploy    -> refit on all data, export site/data/snapshot.json for the website"""
 from __future__ import annotations
 
 import argparse
@@ -29,7 +30,13 @@ def main():
     t.add_argument("--minutes", type=float, default=15)
     t.add_argument("--data", default="data/pro")
     t.add_argument("--save", default="models", help="writes tuned_<model>.json here")
+    d = sub.add_parser("deploy", help="refit on all data and export site/data/snapshot.json")
+    d.add_argument("--src", default="pro_play_data")
+    d.add_argument("--site", default="site")
     args = ap.parse_args()
+    if args.cmd == "deploy":
+        from . import deploy
+        return deploy.deploy(args.src, Path("models"), Path(args.site))
     if args.cmd == "compare":
         return compare(Path(args.data), Path(args.save), args.defaults, not args.no_draft)
     if args.cmd == "tune":

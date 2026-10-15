@@ -1,6 +1,7 @@
 """python -m draft train   -> fit the solo queue draft model, models/draft_net.pt
 python -m draft score   -> draft score for every pro game, data/pro/draft_scores.parquet
-python -m draft patch-eval -> same-patch vs all-patch draft models on pro games (see patch_eval.py)"""
+python -m draft patch-eval -> same-patch vs all-patch draft models on pro games (see patch_eval.py)
+python -m draft freeze  -> champion strength table from recent patches, models/draft_strength.json"""
 from __future__ import annotations
 
 import argparse
@@ -60,6 +61,45 @@ def train(data_dir: Path, out_dir: Path):
     print(f"saved {out_dir / 'draft_net.pt'}")
 
 
+def freeze(data_dir: Path, out_dir: Path, patches: list[str]):
+    """Champion strength per role from the given patches only, saved as a plain JSON table.
+
+    The strength model matched the draft network everywhere we tested, and as a table it can
+    be used by the website's JavaScript directly: draft logit = sum over roles of
+    value[blue champion][role] - value[red champion][role]."""
+    torch.set_num_threads(6)
+    matches, voc, ch, y = load_solo(data_dir)
+    keep = torch.tensor(matches.patch.isin(patches).to_numpy())
+    ch, y = ch[keep], y[keep]
+    cut = int(len(y) * 0.9)
+    cfg = {"model": {"kind": "strength", "n_champ": len(voc) + 1}, "lr": 3e-3, "weight_decay": 0.0,
+           "batch_size": 512}
+    _, epoch, holdout = model.fit(ch[:cut], y[:cut], cfg, val=(ch[cut:], y[cut:]))
+    final, _, _ = model.fit(ch, y, cfg, epochs=max(epoch, 1))
+    w = final.scorer.w.weight.detach().numpy()
+    p = float(y[:cut].mean())
+    out = {"patches": patches, "matches": int(len(y)), "epochs": epoch,
+           "holdout_log_loss": holdout,
+           "holdout_log_loss_always_blue_rate": float(-(y[cut:] * np.log(p) + (1 - y[cut:]) * np.log(1 - p)).mean()),
+           "roles": data.PRO_ROLES,
+           "values": {name: [round(float(v), 5) for v in w[i]] for name, i in voc.items()}}
+    out_dir.mkdir(parents=True, exist_ok=True)
+    (out_dir / "draft_strength.json").write_text(json.dumps(out, indent=1))
+    print(f"champion strength from {len(y):,} games on {patches}: holdout log loss {holdout:.4f} "
+          f"(always blue rate {out['holdout_log_loss_always_blue_rate']:.4f}) -> {out_dir / 'draft_strength.json'}")
+
+
+def strength_logit(table: dict, games: pd.DataFrame) -> np.ndarray:
+    """Draft logit of pro games from a frozen strength table (unknown champions count as 0)."""
+    vals = {k: np.array(v) for k, v in table["values"].items()}
+    out = np.zeros(len(games))
+    for sign, sd in ((1, "blue"), (-1, "red")):
+        for r, role in enumerate(data.PRO_ROLES):
+            out += sign * games[f"{sd}_{role}_champion"].map(
+                lambda c: vals[data.norm(c)][r] if data.norm(c) in vals else 0.0).to_numpy()
+    return out
+
+
 def score(model_dir: Path, pro_dir: Path):
     saved = torch.load(model_dir / "draft_net.pt", weights_only=False)
     m = model.DraftModel(**saved["cfg"]["model"])
@@ -76,7 +116,8 @@ def score(model_dir: Path, pro_dir: Path):
 
 def main():
     ap = argparse.ArgumentParser(prog="draft")
-    ap.add_argument("cmd", choices=["train", "score", "patch-eval"])
+    ap.add_argument("cmd", choices=["train", "score", "patch-eval", "freeze"])
+    ap.add_argument("--patches", nargs="+", default=["16.19", "16.20"], help="freeze: solo queue patches to use")
     ap.add_argument("--data", default="data")
     ap.add_argument("--models", default="models")
     ap.add_argument("--min-games", type=int, default=20_000, help="patch-eval: solo games a patch needs")
@@ -85,6 +126,8 @@ def main():
         train(Path(args.data), Path(args.models))
     elif args.cmd == "score":
         score(Path(args.models), Path(args.data) / "pro")
+    elif args.cmd == "freeze":
+        freeze(Path(args.data), Path(args.models), args.patches)
     else:
         from . import patch_eval
         torch.set_num_threads(6)

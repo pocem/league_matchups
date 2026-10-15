@@ -19,6 +19,8 @@ python -m crawler export --patch-prefix 16. --min-apex 3
 
 - `run --no-matches` only scans match ids, which gives you an exact count of available
   matches before you spend days downloading them.
+- `run --until 2026-09-23` only downloads queued matches played before that date. It
+  finds the cut with a binary search over the queue, and the newer matches stay queued.
 - Rerunning `run` resumes. Players are rescanned for new games after `--refresh-hours`
   (default 24), so a daily run keeps the dataset current.
 - Each routing region (americas, europe, asia, sea) has its own rate limit, so crawling
@@ -150,3 +152,25 @@ python -m draft patch-eval                   # patches with >= 20k solo games (-
 The crawl downloads newest matches first, and its queue holds patches 16.16-16.19, which pro play
 was on in Aug-Oct 2026 (about 2,000 pro games). Each of those patches becomes testable as it
 fills up.
+
+## Website (GitHub Pages)
+
+`site/` is a static page that runs the logistic regression in the browser. The page has
+searchable team, player and champion inputs, pre-filled lineups and a side swap. It shows the
+probability before and after the draft, fair odds, and a breakdown of what moves the number.
+`.github/workflows/pages.yml` publishes `site/` on every push to `main` that changes it. One-time
+setup: repo Settings → Pages → Source: GitHub Actions.
+
+```bash
+python -m draft freeze --patches 16.19 16.20   # once per patch: champion strength table
+python -m pro deploy                            # each match day, after downloading the newest
+                                                # Oracle's Elixir CSV: refit + site/data/snapshot.json
+python -m pytest tests/test_deploy.py           # the snapshot and the JavaScript match the model
+cd site && python -m http.server 8000           # preview at http://localhost:8000
+```
+
+`pro deploy` refits two LRs on Jul 2024 to today: pre-draft (without champion features) and
+post-draft. It fits the draft combining layer (`a + b · post-draft logit + w · draft logit`) on
+recent pro games using predictions of a model that hadn't seen them. It exports ratings,
+rosters, champion stats, weights and 30 test cases. The page checks itself against those test
+cases and shows the result in the footer.

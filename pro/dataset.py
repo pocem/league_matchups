@@ -26,7 +26,9 @@ SLOT_FEATURES = ["player_elo", "player_games",
 SIDE_FEATURES = ["team_elo", "team_games", "roster_elo", "league_offset"]
 
 
-def build(df: pd.DataFrame, params: EloParams | None = None) -> pd.DataFrame:
+def build(df: pd.DataFrame, params: EloParams | None = None, return_state=False):
+    """The game table; with return_state also the ratings and counts after the last game,
+    which is what a prediction for an upcoming game needs (see pro/deploy.py)."""
     params = params or EloParams()
     n = len(df) // 10
     first = df.iloc[::10]
@@ -117,7 +119,14 @@ def build(df: pd.DataFrame, params: EloParams | None = None) -> pd.DataFrame:
             meta.add((c, role), t, w)
             patch_games[(c, role, patches[g])] += 1
 
-    return _assemble(df, n, players, champs, teams, home, blue_win, slot, side, p_team, p_roster)
+    games = _assemble(df, n, players, champs, teams, home, blue_win, slot, side, p_team, p_roster)
+    if not return_state:
+        return games
+    state = {"player_elo": player_elo, "team_elo": team_elo, "league_elo": league_elo,
+             "last_home": last_home, "pc_games": pc_games, "pc_last": pc_last, "meta": meta,
+             "patch_games": patch_games, "t0": first.date.iloc[0], "t_end": t_days[-1],
+             "season": season, "params": params}
+    return games, state
 
 
 def _assemble(df, n, players, champs, teams, home, blue_win, slot, side, p_team, p_roster):

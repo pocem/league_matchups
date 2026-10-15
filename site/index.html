@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>League Matchups</title>
+  <meta name="description" content="Pre-game win probability for professional League of Legends matches, from team and player ratings, champion experience and the draft.">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="top">
+    <div>
+      <h1>League Matchups</h1>
+      <p class="sub">Win probability for pro League of Legends games, before and after the draft.</p>
+    </div>
+    <p class="meta" id="snapshot-info">Loading model…</p>
+  </header>
+
+  <main>
+    <section class="board" aria-label="Match setup">
+      <div class="side blue" id="side-blue"></div>
+      <div class="middle">
+        <button type="button" id="swap" title="Swap blue and red side">⇄ Swap sides</button>
+        <button type="button" id="clear-champs">Clear champions</button>
+      </div>
+      <div class="side red" id="side-red"></div>
+    </section>
+
+    <section class="result" id="result" aria-live="polite">
+      <p class="hint">Pick two teams to see the pre-draft probability. Add all ten champions for the final one.</p>
+    </section>
+  </main>
+
+  <footer>
+    <p>
+      Pro match data: <a href="https://oracleselixir.com">Oracle's Elixir</a>. Draft statistics from
+      high-elo ranked solo queue via the Riot Games API. Model: logistic regression on Elo-style team and
+      player ratings, champion experience and the champion meta, plus a solo queue draft score.
+      <span id="selftest"></span>
+    </p>
+    <p>
+      An analysis project, not betting advice. League Matchups isn't endorsed by Riot Games and doesn't
+      reflect the views or opinions of Riot Games or anyone officially involved in producing or managing
+      Riot Games properties. Riot Games, and all associated properties are trademarks or registered
+      trademarks of Riot Games, Inc.
+    </p>
+  </footer>
+
+  <datalist id="dl-teams"></datalist>
+  <datalist id="dl-players"></datalist>
+  <datalist id="dl-champs"></datalist>
+
+  <template id="side-template">
+    <h2 class="side-title"></h2>
+    <label class="team-label">Team
+      <input class="team" list="dl-teams" autocomplete="off" spellcheck="false" placeholder="Type a team…">
+    </label>
+    <p class="team-note"></p>
+    <div class="slots">
+      <div class="slot-head"><span>Role</span><span>Player</span><span>Champion</span></div>
+    </div>
+  </template>
+
+  <script src="model.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

@@ -58,6 +58,9 @@ def main():
     p_run.add_argument("--skip-players", action="store_true", help="reuse the stored ladder snapshot")
     p_run.add_argument("--no-ids", action="store_true", help="only download already queued matches")
     p_run.add_argument("--no-matches", action="store_true", help="only scan match ids (fast count)")
+    p_run.add_argument("--until", type=unix_date, default=None,
+                       help="only download queued matches played before this date, YYYY-MM-DD "
+                            "(e.g. to skip ahead to an older patch); the rest stays queued")
     p_run.add_argument("--refresh-hours", type=int, default=24,
                        help="re-scan a player's match ids if the last scan is older than this")
     p_run.add_argument("--id-workers", type=int, default=2)
