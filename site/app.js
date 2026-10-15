@@ -3,6 +3,10 @@
   "use strict";
   const M = LoLModel;
   const ROLE_NAMES = { top: "Top", jng: "Jng", mid: "Mid", bot: "Bot", sup: "Sup" };
+  // Bookmaker-style odds: a 6% margin, added as +3 percentage points of implied probability on
+  // each side ("margin proportional to the odds"), so the underdog carries more of it, as at
+  // real bookmakers. E.g. 80/20 -> fair 1.25/5.00, with margin 1.20/4.35.
+  const BOOK_MARGIN = 0.06;
   const GROUPS = ["Team rating", "Player ratings", "Experience", "Champion comfort", "Champion meta",
                   "Draft (solo queue)", "Blue side & baseline"];
   let SNAP = null;
@@ -235,6 +239,9 @@
     const bName = SNAP.teams[blue.team].name, rName = SNAP.teams[red.team].name;
     const pct = (x) => (100 * x).toFixed(1) + "%";
     const odds = (x) => (1 / x).toFixed(2);
+    const bookOdds = (x) => Math.max(1.01, 1 / (x + BOOK_MARGIN / 2)).toFixed(2);
+    const oddsLines = (x) => `<div class="odds">fair odds ${odds(x)}</div>
+          <div class="odds book">with ${Math.round(BOOK_MARGIN * 100)}% margin ${bookOdds(x)}</div>`;
     const fs = factors(blue, red, res, draftDone, now);
     const max = Math.max(...fs.map(([, v]) => Math.abs(v)), 0.05);
     const slope = p * (1 - p) * 100; // logit -> percentage points near the current probability
@@ -252,9 +259,9 @@
       <p class="stage">${draftDone ? "After the draft" : `Before the draft · ${nChamps}/10 champions entered`}</p>
       <div class="score">
         <div class="blue"><div class="team">${esc(bName)}</div><div class="pct">${pct(p)}</div>
-          <div class="odds">fair odds ${odds(p)}</div></div>
+          ${oddsLines(p)}</div>
         <div class="red"><div class="team">${esc(rName)}</div><div class="pct">${pct(1 - p)}</div>
-          <div class="odds">fair odds ${odds(1 - p)}</div></div>
+          ${oddsLines(1 - p)}</div>
       </div>
       <div class="bar" role="img" aria-label="${esc(bName)} ${pct(p)}, ${esc(rName)} ${pct(1 - p)}"><span style="width:${(100 * p).toFixed(1)}%"></span></div>
       ${draftDone ? `<p class="pre-note">Before the draft: ${pct(res.pre)} · teams and champions without the draft score: ${pct(res.post)}</p>` : ""}
