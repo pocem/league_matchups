@@ -89,17 +89,6 @@ def freeze(data_dir: Path, out_dir: Path, patches: list[str]):
           f"(always blue rate {out['holdout_log_loss_always_blue_rate']:.4f}) -> {out_dir / 'draft_strength.json'}")
 
 
-def strength_logit(table: dict, games: pd.DataFrame) -> np.ndarray:
-    """Draft logit of pro games from a frozen strength table (unknown champions count as 0)."""
-    vals = {k: np.array(v) for k, v in table["values"].items()}
-    out = np.zeros(len(games))
-    for sign, sd in ((1, "blue"), (-1, "red")):
-        for r, role in enumerate(data.PRO_ROLES):
-            out += sign * games[f"{sd}_{role}_champion"].map(
-                lambda c: vals[data.norm(c)][r] if data.norm(c) in vals else 0.0).to_numpy()
-    return out
-
-
 def score(model_dir: Path, pro_dir: Path):
     saved = torch.load(model_dir / "draft_net.pt", weights_only=False)
     m = model.DraftModel(**saved["cfg"]["model"])

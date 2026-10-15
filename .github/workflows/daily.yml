@@ -1,0 +1,102 @@
+# Daily model update: download the newest Oracle's Elixir data, refit, test, publish.
+# Runs every 6 hours until the snapshot has been generated that day (by this job or a local
+# `python -m pro deploy` that was pushed). "Run workflow" by hand always updates. Google Drive often refuses
+# downloads of popular files for a few hours, so the later runs are the retries.
+# Optional repo secret GOOGLE_API_KEY (Google Cloud API key, Drive API enabled) gives the
+# download a second route when that happens.
+name: Daily update
+
+on:
+  schedule:
+    - cron: "23 */6 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+
+concurrency:
+  group: daily-update
+  cancel-in-progress: false
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    outputs:
+      changed: ${{ steps.commit.outputs.changed }}
+    steps:
+      # everything but the large pro_play_data CSVs (root files are always included)
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: |
+            pro
+            draft
+            models
+            site
+            tests
+
+      - name: Already published today? (scheduled runs only; a manual run always updates)
+        id: today
+        run: |
+          if [ "${{ github.event_name }}" = "schedule" ] &&
+             grep -q "\"generated\":\"$(date -u +%Y-%m-%d)" site/data/snapshot.json; then
+            echo "done=true" >> "$GITHUB_OUTPUT"
+            echo "Snapshot already updated today."
+          fi
+
+      - if: steps.today.outputs.done != 'true'
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements-deploy.txt
+
+      - if: steps.today.outputs.done != 'true'
+        name: Restore earlier downloads (finished seasons are only downloaded once)
+        uses: actions/cache@v4
+        with:
+          path: pro_play_data
+          key: oracles-elixir-${{ github.run_id }}
+          restore-keys: oracles-elixir-
+
+      - if: steps.today.outputs.done != 'true'
+        run: pip install -r requirements-deploy.txt
+
+      - if: steps.today.outputs.done != 'true'
+        name: Download Oracle's Elixir data
+        env:
+          GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
+        run: python -m pro fetch
+
+      - if: steps.today.outputs.done != 'true'
+        name: Refit and export the snapshot
+        run: |
+          cp site/data/snapshot.json /tmp/previous.json
+          python -m pro deploy
+
+      - if: steps.today.outputs.done != 'true'
+        name: Check the snapshot against the model
+        run: python -m pytest tests/test_deploy.py -q
+
+      - if: steps.today.outputs.done != 'true'
+        name: Commit if there are new games
+        id: commit
+        run: |
+          new=$(python -c "import json; print(json.load(open('site/data/snapshot.json'))['data_until'])")
+          old=$(python -c "import json; print(json.load(open('/tmp/previous.json'))['data_until'])")
+          if [ "$new" = "$old" ]; then
+            echo "No new games since the last snapshot; nothing to publish."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add site/data/snapshot.json
+          git commit -m "Daily snapshot: results through $(python -c "import json; print(json.load(open('site/data/snapshot.json'))['data_until_date'])")"
+          git push
+          echo "changed=true" >> "$GITHUB_OUTPUT"
+
+  publish:
+    needs: update
+    if: needs.update.outputs.changed == 'true'
+    uses: ./.github/workflows/pages.yml

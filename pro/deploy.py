@@ -28,7 +28,7 @@ from sklearn.pipeline import make_pipeline
 from sklearn.preprocessing import StandardScaler
 
 from . import dataset, load
-from . import models as M
+from . import features as M
 from .load import ROLES
 from .ratings import BASE, LEAGUE_ALIASES
 
@@ -120,8 +120,7 @@ def fit_lr(rows, cols, C) -> dict:
 
 
 def fit_combiner(games, strength: dict, C) -> dict:
-    from draft.__main__ import strength_logit  # numpy is already loaded, so torch import order is fine
-    from draft.patch_eval import with_draft
+    from draft.combine import strength_logit, with_draft
 
     cols = lr_cols(games, True)
     train = games[(games.date >= LIVE_TRAIN_START) & (games.date < OOS_TRAIN_END)]

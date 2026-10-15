@@ -20,46 +20,11 @@ from sklearn.pipeline import make_pipeline
 from sklearn.preprocessing import StandardScaler
 from torch import nn
 
+from .features import NEVER_DAYS, SIDES, logreg_cols, side_features, tabular  # noqa: F401
 from .load import ROLES
 
-SIDES = ["blue", "red"]
 TRAIN_START, VALID_START, TEST_START = "2024-07-01", "2025-07-01", "2026-01-01"
 MAJOR = {"LCK", "LPL", "LEC", "LCS", "LTA N", "LCP", "CBLOL", "MSI", "WLDs", "EWC", "FST"}
-NEVER_DAYS = 3000.0  # pc_days_since for a champion the player never played
-
-
-# ---------------------------------------------------------------- features
-
-def side_features(g: pd.DataFrame, sd: str) -> pd.DataFrame:
-    """One side's numeric features, named without the side prefix."""
-    f = {"team_elo": g[f"{sd}_team_elo"], "roster_elo": g[f"{sd}_roster_elo"],
-         "league_offset": g[f"{sd}_league_offset"], "log_team_games": np.log1p(g[f"{sd}_team_games"])}
-    if "draft_logit" in g:  # solo queue draft model (python -m draft score), from this side's view
-        f["draft_score"] = g.draft_logit * (1 if sd == "blue" else -1)
-    for r in ROLES:
-        p = f"{sd}_{r}_"
-        f[f"{r}_player_elo"] = g[p + "player_elo"]
-        f[f"{r}_log_player_games"] = np.log1p(g[p + "player_games"])
-        f[f"{r}_log_pc_games"] = np.log1p(g[p + "pc_games"])
-        f[f"{r}_log_pc_days"] = np.log1p(g[p + "pc_days_since"].fillna(NEVER_DAYS))
-        f[f"{r}_meta_wr"] = g[p + "meta_wr"]
-        f[f"{r}_log_meta_games"] = np.log1p(g[p + "meta_games"])
-        f[f"{r}_log_patch_games"] = np.log1p(g[p + "patch_games"])
-    return pd.DataFrame(f)
-
-
-def tabular(g: pd.DataFrame, champions=False) -> pd.DataFrame:
-    blue, red = side_features(g, "blue"), side_features(g, "red")
-    diff = (blue - red).add_prefix("diff_")
-    x = pd.concat([blue.add_prefix("blue_"), red.add_prefix("red_"), diff], axis=1)
-    x["playoffs"] = g.playoffs
-    x["game_in_series"] = g.game_in_series
-    x["cross_league"] = g.cross_league.astype(int)
-    if champions:
-        for sd in SIDES:
-            for r in ROLES:
-                x[f"{sd}_{r}_champ"] = g[f"{sd}_{r}_champion_idx"].astype("category")
-    return x
 
 
 def split(g: pd.DataFrame):
@@ -80,10 +45,6 @@ LGBM_DEFAULTS = dict(learning_rate=0.02, num_leaves=15, min_child_samples=60, fe
 LGBM_FIXED = dict(objective="binary", cat_smooth=50, min_data_per_group=100, verbose=-1, seed=0)
 NN_DEFAULTS = dict(hidden=64, n_layers=2, dropout=0.3, weight_decay=1e-3, lr=1e-3, batch_size=256)
 NN_ARCH = ("hidden", "n_layers", "dropout")  # the rest of NN_DEFAULTS are training settings
-
-
-def logreg_cols(g):
-    return [c for c in tabular(g.head()).columns if c.startswith("diff_")]
 
 
 def fit_logreg(tr, va, te, params=None):

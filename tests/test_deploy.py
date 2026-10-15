@@ -17,7 +17,7 @@ import pandas as pd
 import pytest
 
 from pro import dataset, deploy, load
-from pro import models as M
+from pro import features as M
 from pro.load import ROLES
 
 ROOT = Path(__file__).resolve().parents[1]

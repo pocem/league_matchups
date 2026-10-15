@@ -1,4 +1,5 @@
-# Publishes site/ to GitHub Pages whenever it changes on main.
+# Publishes site/ to GitHub Pages: on pushes to main that change it, and after the daily update
+# (pushes made by a workflow don't start other workflows, so daily.yml calls this one).
 # One-time setup: repo Settings -> Pages -> Source: "GitHub Actions".
 name: Deploy site
 
@@ -6,6 +7,7 @@ on:
   push:
     branches: [main]
     paths: ["site/**", ".github/workflows/pages.yml"]
+  workflow_call:
   workflow_dispatch:
 
 permissions:
@@ -26,6 +28,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
+          ref: main               # the daily update has just pushed a new snapshot
           sparse-checkout: site   # skip the large pro_play_data CSVs
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3

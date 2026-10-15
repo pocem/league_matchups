@@ -161,10 +161,21 @@ probability before and after the draft, fair odds, and a breakdown of what moves
 `.github/workflows/pages.yml` publishes `site/` on every push to `main` that changes it. One-time
 setup: repo Settings → Pages → Source: GitHub Actions.
 
+**Daily update, automatic.** `.github/workflows/daily.yml` runs on GitHub every 6 hours. It
+runs `python -m pro fetch` (newest Oracle's Elixir CSV from its public Google Drive folder),
+then `pro deploy` and the tests. If there are new games it commits the snapshot and publishes
+the site. Once that day's snapshot exists, the scheduled runs skip. "Run workflow" in the
+Actions tab forces an update. Google Drive sometimes blocks downloads of popular files for a
+few hours, and the later runs retry. A repo secret `GOOGLE_API_KEY` (a free Google Cloud API
+key with the Drive API enabled) adds a second download route. The daily job only needs
+`requirements-deploy.txt` (no torch or lightgbm). The champion strength table
+(`models/draft_strength.json`) stays as committed until you rerun `python -m draft freeze`
+locally.
+
 ```bash
 python -m draft freeze --patches 16.19 16.20   # once per patch: champion strength table
-python -m pro deploy                            # each match day, after downloading the newest
-                                                # Oracle's Elixir CSV: refit + site/data/snapshot.json
+python -m pro fetch                             # newest Oracle's Elixir CSVs (the daily job does this)
+python -m pro deploy                            # refit + site/data/snapshot.json (the daily job does this)
 python -m pytest tests/test_deploy.py           # the snapshot and the JavaScript match the model
 cd site && python -m http.server 8000           # preview at http://localhost:8000
 ```

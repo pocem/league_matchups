@@ -16,11 +16,10 @@ from __future__ import annotations
 import numpy as np  # before torch, see __main__
 import pandas as pd
 import torch
-from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import roc_auc_score
-from sklearn.model_selection import KFold
 
 from . import data, model
+from .combine import with_draft
 
 PRO_MODELS = ["logistic_regression", "lightgbm", "neural_net"]
 
@@ -48,17 +47,6 @@ def per_patch_scores(matches, champions, games, net_cfg, min_games) -> pd.DataFr
               f"{len(pro)} pro games")
         rows.append(pd.DataFrame({"gameid": pro.gameid, "patch_draft_logit": logit}))
     return pd.concat(rows) if rows else pd.DataFrame(columns=["gameid", "patch_draft_logit"])
-
-
-def with_draft(p, draft, y, seed=0) -> np.ndarray:
-    """Out-of-fold a + b * logit(p) + w * draft. The pro model's logit is refitted too (a, b), and
-    "alone" gets the same treatment with draft = 0, so the comparison only measures w."""
-    base = np.log(p / (1 - p))
-    out = np.empty_like(p)
-    for tr, te in KFold(5, shuffle=True, random_state=seed).split(p):
-        lr = LogisticRegression(C=1e6).fit(np.c_[base[tr], draft[tr]], y[tr])
-        out[te] = lr.predict_proba(np.c_[base[te], draft[te]])[:, 1]
-    return out
 
 
 def evaluate(scored: pd.DataFrame, rng_seed=0) -> pd.DataFrame:

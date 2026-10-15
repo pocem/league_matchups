@@ -2,6 +2,7 @@
 python -m pro tune M    -> hyperparameter search for model M, writes models/tuned_M.json
 python -m pro compare   -> model comparison on 2026 (data/pro/model_comparison.csv), fitted models in models/
                            (uses models/tuned_*.json when present)
+python -m pro fetch     -> download the newest Oracle's Elixir CSVs into pro_play_data/
 python -m pro deploy    -> refit on all data, export site/data/snapshot.json for the website"""
 from __future__ import annotations
 
@@ -30,10 +31,16 @@ def main():
     t.add_argument("--minutes", type=float, default=15)
     t.add_argument("--data", default="data/pro")
     t.add_argument("--save", default="models", help="writes tuned_<model>.json here")
+    f = sub.add_parser("fetch", help="download the newest Oracle's Elixir CSVs")
+    f.add_argument("--dest", default="pro_play_data")
     d = sub.add_parser("deploy", help="refit on all data and export site/data/snapshot.json")
     d.add_argument("--src", default="pro_play_data")
     d.add_argument("--site", default="site")
     args = ap.parse_args()
+    if args.cmd == "fetch":
+        from . import fetch
+        fetch.fetch(Path(args.dest))
+        return
     if args.cmd == "deploy":
         from . import deploy
         return deploy.deploy(args.src, Path("models"), Path(args.site))

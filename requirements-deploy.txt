@@ -1,0 +1,8 @@
+# What the daily update needs (python -m pro fetch / deploy and the tests): no torch or lightgbm.
+pandas>=2.0
+numpy
+pyarrow>=14
+scikit-learn>=1.4
+gdown>=5.0
+pytest
+mini-racer
