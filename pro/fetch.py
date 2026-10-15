@@ -48,16 +48,28 @@ def download(file_id: str, out: Path):
             return
         error = "download failed"
     except Exception as e:  # gdown raises on the quota page
-        error = str(e).strip().splitlines()[0] if str(e).strip() else type(e).__name__
+        text = str(e)
+        error = ("plain download blocked by Google Drive (too many recent downloads)"
+                 if "Too many users" in text else (text.strip().splitlines() or [type(e).__name__])[0])
     key = os.environ.get("GOOGLE_API_KEY")
     if not key:
         raise ValueError(f"{error} (Google Drive quota; retry later, or set GOOGLE_API_KEY)")
+    import json
     import shutil
+    import urllib.error
     import urllib.request
 
     url = f"https://www.googleapis.com/drive/v3/files/{file_id}?alt=media&key={key}"
-    with urllib.request.urlopen(url, timeout=300) as r, open(out, "wb") as f:
-        shutil.copyfileobj(r, f)
+    try:
+        with urllib.request.urlopen(url, timeout=300) as r, open(out, "wb") as f:
+            shutil.copyfileobj(r, f)
+    except urllib.error.HTTPError as e:
+        try:  # Drive explains itself in a JSON body, e.g. downloadQuotaExceeded or an invalid key
+            err = json.loads(e.read())["error"]
+            detail = f"{err.get('message')} ({', '.join(x.get('reason', '') for x in err.get('errors', []))})"
+        except Exception:
+            detail = str(e)
+        raise ValueError(f"{error}; Drive API with GOOGLE_API_KEY: HTTP {e.code}: {detail}") from None
 
 
 def fetch(dest=Path("pro_play_data")) -> list[Path]:

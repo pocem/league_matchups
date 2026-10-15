@@ -26,15 +26,9 @@ jobs:
     outputs:
       changed: ${{ steps.commit.outputs.changed }}
     steps:
-      # everything but the large pro_play_data CSVs (root files are always included)
+      # includes the committed pro_play_data CSVs: finished seasons never change, so only the
+      # current season has to come from Google Drive (which often blocks popular files)
       - uses: actions/checkout@v4
-        with:
-          sparse-checkout: |
-            pro
-            draft
-            models
-            site
-            tests
 
       - name: Already published today? (scheduled runs only; a manual run always updates)
         id: today
@@ -53,7 +47,7 @@ jobs:
           cache-dependency-path: requirements-deploy.txt
 
       - if: steps.today.outputs.done != 'true'
-        name: Restore earlier downloads (finished seasons are only downloaded once)
+        name: Restore the last downloaded current-season file (newer than the committed one)
         uses: actions/cache@v4
         with:
           path: pro_play_data
