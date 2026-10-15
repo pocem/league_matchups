@@ -115,7 +115,18 @@ input {
   border-radius: 7px;
   min-width: 0;
 }
-input:focus { outline: 2px solid var(--side-color, var(--blue)); outline-offset: -1px; }
+select {
+  width: 100%;
+  padding: 7px 6px;
+  font: inherit;
+  color: var(--text);
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  min-width: 0;
+}
+input:focus, select:focus { outline: 2px solid var(--side-color, var(--blue)); outline-offset: -1px; }
+.player-cell { display: grid; gap: 4px; min-width: 0; }
 input.bad { border-color: var(--bad); background: color-mix(in srgb, var(--bad) 8%, var(--bg)); }
 input.new { border-style: dashed; }
 

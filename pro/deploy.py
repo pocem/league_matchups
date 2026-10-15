@@ -36,6 +36,7 @@ LIVE_TRAIN_START = "2024-07-01"
 OOS_TRAIN_END = "2026-01-01"         # the model whose predictions the combining layer is fitted on
 COMBINER_MIN_PATCH = "16.18"         # pro games this close to the solo queue patches
 ACTIVE_DAYS = 365                    # teams and players listed on the site
+SQUAD_DAYS = 180                     # a team's players offered as substitutes: played for it this recently
 CHAMPION_FEATURES = ("pc_games", "pc_days", "meta_wr", "meta_games", "patch_games")
 SHRINK_PRIOR, SHRINK_STRENGTH = 0.5, 10.0
 DAY_MS = 86_400_000
@@ -153,8 +154,20 @@ def snapshot(games, state, models: dict, strength: dict, champions: list) -> dic
                 "roster": [g[f"{sd}_{r}_player"] for r in ROLES], "last_game": g.date.strftime("%Y-%m-%d")}
             if g.league == "WLDs" and g.year == end.year:
                 worlds.add(g[f"{sd}_team"])
+    # who played for each team lately, per role: the substitutes the site offers
+    recent = active[active.date >= end - pd.Timedelta(days=SQUAD_DAYS)]
+    squad = {}  # team -> {(player, role index): games}
+    for sd in ("blue", "red"):
+        for r, role in enumerate(ROLES):
+            for tid, pid in recent[[f"{sd}_team", f"{sd}_{role}_player"]].itertuples(index=False):
+                counts = squad.setdefault(tid, {})
+                counts[(pid, r)] = counts.get((pid, r), 0) + 1
     for tid, t in teams.items():
-        t.update(rating=te.rating[tid], games=te.games[tid], home=state["last_home"][tid], worlds=tid in worlds)
+        t.update(rating=te.rating[tid], games=te.games[tid], home=state["last_home"][tid], worlds=tid in worlds,
+                 players=sorted(([pid, r, n] for (pid, r), n in squad.get(tid, {}).items()), key=lambda x: -x[2]))
+        for r, pid in enumerate(t["roster"]):  # the last lineup is always offered, even if older
+            if not any(p == pid and pr == r for p, pr, _ in t["players"]):
+                t["players"].append([pid, r, 0])
 
     player_ids = set(active[[f"{sd}_{r}_player" for sd in ("blue", "red") for r in ROLES]].to_numpy().ravel())
     names, team_of = {}, {}

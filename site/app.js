@@ -7,6 +7,7 @@
   // each side ("margin proportional to the odds"), so the underdog carries more of it, as at
   // real bookmakers. E.g. 80/20 -> fair 1.25/5.00, with margin 1.20/4.35.
   const BOOK_MARGIN = 0.06;
+  const OTHER = "__other"; // player dropdown value: search all players instead
   const GROUPS = ["Team rating", "Player ratings", "Experience", "Champion comfort", "Champion meta",
                   "Draft (solo queue)", "Blue side & baseline"];
   let SNAP = null;
@@ -83,15 +84,25 @@
       const row = document.createElement("div");
       row.className = "slot";
       row.innerHTML = `<span class="role">${ROLE_NAMES[role]}</span>
-        <input class="player" list="dl-players" autocomplete="off" spellcheck="false" aria-label="${title} ${role} player">
+        <span class="player-cell">
+          <select class="player-pick" aria-label="${title} ${role} player"><option value="">Pick a team first</option></select>
+          <input class="player-other" list="dl-players" autocomplete="off" spellcheck="false" hidden
+                 placeholder="Search all players…" aria-label="${title} ${role} other player">
+        </span>
         <input class="champ" list="dl-champs" autocomplete="off" spellcheck="false" aria-label="${title} ${role} champion" placeholder="Champion">`;
       slots.appendChild(row);
-      side.players.push($(".player", row));
+      const slot = { pick: $(".player-pick", row), other: $(".player-other", row) };
+      slot.pick.addEventListener("change", () => {
+        slot.other.hidden = slot.pick.value !== OTHER;
+        if (!slot.other.hidden) slot.other.focus();
+        update();
+      });
+      slot.other.addEventListener("change", () => { resolvePlayer(slot.other, true); update(); });
+      side.players.push(slot);
       side.champs.push($(".champ", row));
     }
     side.team.addEventListener("input", () => onTeam(side, false));
     side.team.addEventListener("change", () => onTeam(side, true));
-    for (const p of side.players) p.addEventListener("change", () => { resolvePlayer(p, true); update(); });
     for (const c of side.champs) {
       c.addEventListener("input", update);
       c.addEventListener("change", () => { resolveChamp(c, true); update(); });
@@ -117,11 +128,45 @@
     side.team.classList.toggle("bad", loose && !!side.team.value.trim() && !id);
     if (id && id !== side.teamId) {
       side.teamId = id;
-      SNAP.teams[id].roster.forEach((pid, r) => { side.players[r].value = playerLabel[pid] || ""; });
-    } else if (!id) {
+      fillSquad(side, SNAP.teams[id].roster.map((pid) => ({ pick: pid, other: "" })));
+    } else if (!id && side.teamId) {
       side.teamId = null;
+      fillSquad(side, null);
     }
     update();
+  }
+
+  // Each player slot: the team's players who played this role lately (most games first), then
+  // "Other player…" to search everyone. choice: {pick, other}.
+  function fillSquad(side, choices) {
+    const t = side.teamId && SNAP.teams[side.teamId];
+    side.players.forEach((slot, r) => {
+      const sel = slot.pick;
+      sel.innerHTML = "";
+      if (!t) {
+        sel.add(new Option("Pick a team first", ""));
+        slot.other.hidden = true;
+        slot.other.value = "";
+        return;
+      }
+      const name = (pid) => (SNAP.players[pid] || { name: pid }).name;
+      // only who actually played this role for the team (99.4% of pro games are in the player's
+      // main role; flex players appear under each role they played)
+      const games = (n) => (n ? ` · ${n} game${n > 1 ? "s" : ""}` : "");
+      for (const [pid, pr, n] of t.players) {
+        if (pr === r) sel.add(new Option(name(pid) + games(n), pid));
+      }
+      sel.add(new Option("Other player…", OTHER));
+      const c = (choices && choices[r]) || { pick: "", other: "" };
+      if (c.pick && c.pick !== OTHER && ![...sel.options].some((o) => o.value === c.pick)) {
+        sel.value = OTHER; // e.g. a player from elsewhere, kept through a side swap
+        slot.other.value = playerLabel[c.pick] || c.other || "";
+      } else {
+        sel.value = c.pick || OTHER;
+        slot.other.value = c.pick === OTHER ? c.other : "";
+      }
+      slot.other.hidden = sel.value !== OTHER;
+    });
   }
 
   // a player id, "new:<name>" for someone without history, or null when empty
@@ -153,23 +198,34 @@
   }
 
   function swap() {
-    const fields = (s) => [s.team, ...s.players, ...s.champs];
-    const b = fields(ui.blue), r = fields(ui.red);
-    b.forEach((input, i) => { const v = input.value; input.value = r[i].value; r[i].value = v; });
-    [ui.blue.teamId, ui.red.teamId] = [ui.red.teamId, ui.blue.teamId];
+    const save = (s) => ({ team: s.team.value, teamId: s.teamId, champs: s.champs.map((c) => c.value),
+                           players: s.players.map((p) => ({ pick: p.pick.value, other: p.other.value })) });
+    const load = (s, st) => {
+      s.team.value = st.team;
+      s.teamId = st.teamId;
+      fillSquad(s, st.players);
+      s.champs.forEach((c, i) => { c.value = st.champs[i]; });
+    };
+    const b = save(ui.blue), r = save(ui.red);
+    load(ui.blue, r);
+    load(ui.red, b);
     update();
   }
 
   // --- the result
 
+  // a player id, "new:<name>" for someone typed in without history
+  function readPlayer(slot) {
+    if (slot.pick.value !== OTHER) return slot.pick.value || "new:";
+    const id = resolvePlayer(slot.other, false) || "new:";
+    slot.other.classList.toggle("new", id.startsWith("new:") && slot.other.value.trim() !== "");
+    slot.other.title = id.startsWith("new:") ? "No match history: rated as a newcomer" : "";
+    return id;
+  }
+
   function readSide(side) {
-    const players = side.players.map((p) => resolvePlayer(p, false));
-    const champs = side.champs.map((c) => resolveChamp(c, false));
-    side.players.forEach((p, i) => {
-      p.classList.toggle("new", !!players[i] && players[i].startsWith("new:"));
-      p.title = players[i] && players[i].startsWith("new:") ? "No match history: rated as a newcomer" : "";
-    });
-    return { team: side.teamId, players: players.map((p) => p || "new:"), champs };
+    return { team: side.teamId, players: side.players.map(readPlayer),
+             champs: side.champs.map((c) => resolveChamp(c, false)) };
   }
 
   function update() {
