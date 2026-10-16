@@ -1,6 +1,6 @@
 # Daily model update: download the newest Oracle's Elixir data, refit, test, publish.
-# Runs every 6 hours until the snapshot has been generated that day (by this job or a local
-# `python -m pro deploy` that was pushed). "Run workflow" by hand always updates. Google Drive often refuses
+# Runs every 6 hours until the snapshot includes yesterday's games (from this job or a pushed
+# local `python -m pro deploy`). "Run workflow" by hand always updates. Google Drive often refuses
 # downloads of popular files for a few hours, so the later runs are the retries.
 # Optional repo secret GOOGLE_API_KEY (Google Cloud API key, Drive API enabled) gives the
 # download a second route when that happens.
@@ -30,13 +30,13 @@ jobs:
       # current season has to come from Google Drive (which often blocks popular files)
       - uses: actions/checkout@v4
 
-      - name: Already published today? (scheduled runs only; a manual run always updates)
+      - name: Already up to date? (scheduled runs only; a manual run always updates)
         id: today
         run: |
-          if [ "${{ github.event_name }}" = "schedule" ] &&
-             grep -q "\"generated\":\"$(date -u +%Y-%m-%d)" site/data/snapshot.json; then
+          have=$(python3 -c "import json; print(json.load(open('site/data/snapshot.json'))['data_until_date'])")
+          if [ "${{ github.event_name }}" = "schedule" ] && [[ ! "$have" < "$(date -u -d yesterday +%Y-%m-%d)" ]]; then
             echo "done=true" >> "$GITHUB_OUTPUT"
-            echo "Snapshot already updated today."
+            echo "Snapshot already has games through $have."
           fi
 
       - if: steps.today.outputs.done != 'true'
@@ -61,6 +61,9 @@ jobs:
         name: Download Oracle's Elixir data
         env:
           GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
+          GOOGLE_CLIENT_ID: ${{ secrets.GOOGLE_CLIENT_ID }}
+          GOOGLE_CLIENT_SECRET: ${{ secrets.GOOGLE_CLIENT_SECRET }}
+          GOOGLE_REFRESH_TOKEN: ${{ secrets.GOOGLE_REFRESH_TOKEN }}
         run: python -m pro fetch
 
       - if: steps.today.outputs.done != 'true'

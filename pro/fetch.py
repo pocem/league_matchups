@@ -37,39 +37,121 @@ def check(new: Path, old: Path):
             raise ValueError(f"older than the local file ({n_new} games to {last_new} vs {n_old} to {last_old})")
 
 
-def download(file_id: str, out: Path):
-    """Plain public download; Google Drive refuses it for a while when a file is popular
-    ("too many users have viewed or downloaded this file"). With GOOGLE_API_KEY set (a free
-    Google Cloud API key with the Drive API enabled), fall back to the Drive API."""
-    import gdown
+DRIVE = "https://www.googleapis.com/drive/v3/files"
+SCOPES = ["https://www.googleapis.com/auth/drive"]  # copying a file you don't own needs the full scope
 
-    try:
-        if gdown.download(id=file_id, output=str(out), quiet=True):
-            return
-        error = "download failed"
-    except Exception as e:  # gdown raises on the quota page
-        text = str(e)
-        error = ("plain download blocked by Google Drive (too many recent downloads)"
-                 if "Too many users" in text else (text.strip().splitlines() or [type(e).__name__])[0])
-    key = os.environ.get("GOOGLE_API_KEY")
-    if not key:
-        raise ValueError(f"{error} (Google Drive quota; retry later, or set GOOGLE_API_KEY)")
+
+def http(url, *, data=None, token=None, method=None, out: Path | None = None):
+    """A Drive API request with urllib; returns parsed JSON, or streams the body into `out`.
+    Drive's JSON error message (e.g. downloadQuotaExceeded) is turned into a readable ValueError."""
     import json
     import shutil
     import urllib.error
     import urllib.request
 
-    url = f"https://www.googleapis.com/drive/v3/files/{file_id}?alt=media&key={key}"
+    headers = {"Authorization": f"Bearer {token}"} if token else {}
+    if isinstance(data, dict):
+        data, headers["Content-Type"] = json.dumps(data).encode(), "application/json"
+    req = urllib.request.Request(url, data=data, headers=headers, method=method)
     try:
-        with urllib.request.urlopen(url, timeout=300) as r, open(out, "wb") as f:
-            shutil.copyfileobj(r, f)
+        with urllib.request.urlopen(req, timeout=600) as r:
+            if out is not None:
+                with open(out, "wb") as f:
+                    shutil.copyfileobj(r, f)
+                return None
+            body = r.read()
+            return json.loads(body) if body else None
     except urllib.error.HTTPError as e:
-        try:  # Drive explains itself in a JSON body, e.g. downloadQuotaExceeded or an invalid key
-            err = json.loads(e.read())["error"]
-            detail = f"{err.get('message')} ({', '.join(x.get('reason', '') for x in err.get('errors', []))})"
-        except Exception:
-            detail = str(e)
-        raise ValueError(f"{error}; Drive API with GOOGLE_API_KEY: HTTP {e.code}: {detail}") from None
+        raise ValueError(f"HTTP {e.code}: {google_error(e)}") from None
+
+
+def google_error(e) -> str:
+    """Google's explanation from an error response body."""
+    import json
+
+    try:
+        body = json.loads(e.read())
+    except Exception:
+        return str(e.reason)
+    err = body.get("error")
+    if isinstance(err, str):  # the token endpoint: {"error": "invalid_grant", "error_description": ...}
+        return f"{err}: {body.get('error_description', '')}".rstrip(": ")
+    reasons = ", ".join(x.get("reason", "") for x in (err or {}).get("errors", []))
+    return f"{(err or {}).get('message', e.reason)} ({reasons})"
+
+
+def oauth_token() -> str | None:
+    """An access token for your Google account, from GOOGLE_CLIENT_ID / _SECRET / _REFRESH_TOKEN
+    (python -m pro auth creates them). None when they aren't set."""
+    import urllib.parse
+
+    env = {k: os.environ.get(f"GOOGLE_{k}") for k in ("CLIENT_ID", "CLIENT_SECRET", "REFRESH_TOKEN")}
+    if not all(env.values()):
+        return None
+    form = urllib.parse.urlencode({"client_id": env["CLIENT_ID"], "client_secret": env["CLIENT_SECRET"],
+                                   "refresh_token": env["REFRESH_TOKEN"], "grant_type": "refresh_token"})
+    return http("https://oauth2.googleapis.com/token", data=form.encode())["access_token"]
+
+
+def download(file_id: str, out: Path):
+    """Try three routes, as Google Drive often blocks downloads of popular files for hours:
+    1. the plain public download,
+    2. the Drive API with GOOGLE_API_KEY (blocked by the same quota once it's hit),
+    3. signed in as you: copy the file into your own Drive, download the copy, delete it.
+       A copy is a new file, so the original's download quota doesn't apply."""
+    import gdown
+
+    errors = []
+    try:
+        if gdown.download(id=file_id, output=str(out), quiet=True):
+            return
+        errors.append("plain download failed")
+    except Exception as e:  # gdown raises on the quota page
+        text = str(e)
+        errors.append("plain download blocked (too many recent downloads)" if "Too many users" in text
+                      else (text.strip().splitlines() or [type(e).__name__])[0])
+
+    if key := os.environ.get("GOOGLE_API_KEY"):
+        try:
+            return http(f"{DRIVE}/{file_id}?alt=media&key={key}", out=out)
+        except ValueError as e:
+            errors.append(f"API key: {e}")
+
+    try:
+        token = oauth_token()
+    except ValueError as e:
+        errors.append(f"signing in: {e}")
+        token = None
+    if token:
+        try:
+            copy = http(f"{DRIVE}/{file_id}/copy?fields=id", token=token,
+                        data={"name": f"{out.name} (temporary copy for league_matchups)"})["id"]
+            try:
+                return http(f"{DRIVE}/{copy}?alt=media", token=token, out=out)
+            finally:
+                http(f"{DRIVE}/{copy}", token=token, method="DELETE")
+        except ValueError as e:
+            errors.append(f"copy in your Drive: {e}")
+    elif not any(e.startswith("signing in") for e in errors):
+        errors.append("no Google sign-in set up for the copy route (python -m pro auth)")
+    raise ValueError("; ".join(errors))
+
+
+def authorize(client_secrets: Path):
+    """One-time: sign in with your Google account and print the three values for GitHub secrets.
+    client_secrets is the OAuth client JSON (type "Desktop app") from Google Cloud Console."""
+    import json
+
+    from google_auth_oauthlib.flow import InstalledAppFlow  # pip install google-auth-oauthlib
+
+    creds = InstalledAppFlow.from_client_secrets_file(str(client_secrets), SCOPES).run_local_server(
+        port=0, access_type="offline", prompt="consent")
+    client = json.loads(client_secrets.read_text())["installed"]
+    print("\nAdd these as GitHub repo secrets (Settings -> Secrets and variables -> Actions):\n")
+    print(f"GOOGLE_CLIENT_ID      {client['client_id']}")
+    print(f"GOOGLE_CLIENT_SECRET  {client['client_secret']}")
+    print(f"GOOGLE_REFRESH_TOKEN  {creds.refresh_token}")
+    print("\nThen delete the client JSON file; never commit it or these values.")
 
 
 def fetch(dest=Path("pro_play_data")) -> list[Path]:

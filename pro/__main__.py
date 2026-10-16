@@ -33,6 +33,8 @@ def main():
     t.add_argument("--save", default="models", help="writes tuned_<model>.json here")
     f = sub.add_parser("fetch", help="download the newest Oracle's Elixir CSVs")
     f.add_argument("--dest", default="pro_play_data")
+    a = sub.add_parser("auth", help="one-time Google sign-in for fetch's copy route")
+    a.add_argument("client_secrets", help="OAuth client JSON (Desktop app) from Google Cloud Console")
     d = sub.add_parser("deploy", help="refit on all data and export site/data/snapshot.json")
     d.add_argument("--src", default="pro_play_data")
     d.add_argument("--site", default="site")
@@ -40,6 +42,10 @@ def main():
     if args.cmd == "fetch":
         from . import fetch
         fetch.fetch(Path(args.dest))
+        return
+    if args.cmd == "auth":
+        from . import fetch
+        fetch.authorize(Path(args.client_secrets))
         return
     if args.cmd == "deploy":
         from . import deploy
