@@ -1,14 +1,17 @@
 # Daily model update: download the newest Oracle's Elixir data, refit, test, publish.
 # Runs every 6 hours until the snapshot includes yesterday's games (from this job or a pushed
-# local `python -m pro deploy`). "Run workflow" by hand always updates. Google Drive often refuses
-# downloads of popular files for a few hours, so the later runs are the retries.
-# Optional repo secret GOOGLE_API_KEY (Google Cloud API key, Drive API enabled) gives the
-# download a second route when that happens.
+# local `python -m pro deploy`). "Run workflow" by hand, or pushing a new draft table
+# (models/draft_strength.json), always updates. Google Drive often blocks downloads of popular
+# files; pro/fetch.py then uses GOOGLE_API_KEY, and finally a temporary copy in your own Drive
+# (GOOGLE_CLIENT_ID / _SECRET / _REFRESH_TOKEN, from `python -m pro auth`).
 name: Daily update
 
 on:
   schedule:
     - cron: "23 */6 * * *"
+  push:
+    branches: [main]
+    paths: ["models/draft_strength.json"]
   workflow_dispatch:
 
 permissions:
@@ -77,13 +80,15 @@ jobs:
         run: python -m pytest tests/test_deploy.py -q
 
       - if: steps.today.outputs.done != 'true'
-        name: Commit if there are new games
+        name: Commit if anything changed (new games, a new draft table, model changes)
         id: commit
         run: |
-          new=$(python -c "import json; print(json.load(open('site/data/snapshot.json'))['data_until'])")
-          old=$(python -c "import json; print(json.load(open('/tmp/previous.json'))['data_until'])")
-          if [ "$new" = "$old" ]; then
-            echo "No new games since the last snapshot; nothing to publish."
+          same=$(python -c "
+          import json
+          drop = lambda s: {k: v for k, v in s.items() if k != 'generated'}
+          print(drop(json.load(open('site/data/snapshot.json'))) == drop(json.load(open('/tmp/previous.json'))))")
+          if [ "$same" = "True" ]; then
+            echo "Nothing changed since the last snapshot; nothing to publish."
             exit 0
           fi
           git config user.name "github-actions[bot]"
